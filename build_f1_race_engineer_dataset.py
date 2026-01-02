@@ -8,12 +8,18 @@ This script creates a fine-tuning dataset by:
 4. Saving as JSONL format for model fine-tuning
 """
 
+import os
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+os.environ['LC_ALL'] = 'en_US.UTF-8'
+os.environ['LANG'] = 'en_US.UTF-8'
+os.environ['MKL_THREADING_LAYER'] = 'sequential'
+os.environ['MKL_SERVICE_FORCE_INTEL'] = '1'
+
 import requests
 import pandas as pd
 import json
 import datetime
 import time
-import os
 import urllib.request
 import urllib.error
 import subprocess
@@ -25,7 +31,7 @@ import whisper.audio as whisper_audio
 
 
 # Configuration
-YEAR = 2024  # Year to process
+YEARS = [2023]  # Years to process
 SESSION_TYPE = "Race"  # Options: "Race", "Practice", "Qualifying", etc. or None for all
 TELEMETRY_WINDOW_SECONDS = 30  # Seconds before radio message to include telemetry
 WHISPER_MODEL = "base"  # Options: tiny, base, small, medium, large
@@ -501,7 +507,7 @@ def main():
     print("=" * 60)
     print("F1 Race Engineer Dataset Builder")
     print("=" * 60)
-    print(f"Year: {YEAR}")
+    print(f"Years: {YEARS}")
     if SESSION_TYPE:
         print(f"Session Type: {SESSION_TYPE}")
     print()
@@ -523,11 +529,20 @@ def main():
     
     print()
     
-    # Get all sessions
+    # Get all sessions from all years
     print("Fetching sessions...")
-    sessions = get_sessions(YEAR, SESSION_TYPE)
+    sessions = []
+    for year in YEARS:
+        print(f"  Fetching sessions for {year}...")
+        year_sessions = get_sessions(year, SESSION_TYPE)
+        if year_sessions:
+            sessions.extend(year_sessions)
+            print(f"    ✓ Found {len(year_sessions)} sessions")
+        else:
+            print(f"    ✗ No sessions found for {year}")
+    
     if not sessions:
-        print("✗ No sessions found")
+        print("✗ No sessions found for any year")
         return
     
     # Filter sessions if specified
