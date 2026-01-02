@@ -36,16 +36,46 @@ def is_purely_conversational(text):
     """
     text_lower = text.lower().strip()
     
+    # If text contains any numbers (positions, laps, settings, times), keep it
+    if any(c.isdigit() for c in text):
+        return False
+    
     # Technical keywords that indicate the message has value
     technical_keywords = [
         'engine', 'strat', 'mode', 'position', 'p1', 'p2', 'p3', 'p4', 'p5',
-        'p6', 'p7', 'p8', 'p9', 'p10', 'tire', 'tyre', 'deg', 'gap', 'delta',
-        'lap', 'box', 'pit', 'stop', 'fuel', 'temp', 'brake', 'diff', 'energy',
+        'p6', 'p7', 'p8', 'p9', 'p10', 'p11', 'p12', 'p13', 'p14', 'p15',
+        'p16', 'p17', 'p18', 'p19', 'p20',
+        'tire', 'tyre', 'deg', 'gap', 'delta', 'lap', 'laps', 'box', 'pit', 'stop',
+        'fuel', 'temp', 'temperature', 'brake', 'brakes', 'diff', 'energy',
         'drs', 'overtake', 'defend', 'attack', 'pace', 'sector', 'speed',
-        'debris', 'yellow', 'safety', 'vsc', 'damage', 'front', 'rear',
+        'debris', 'yellow', 'flag', 'flags', 'safety', 'vsc', 'damage', 'front', 'rear',
         'balance', 'understeer', 'oversteer', 'downforce', 'ers', 'battery',
         'charge', 'deploy', 'harvest', 'rpm', 'throttle', 'steering',
-        'suspension', 'ride', 'height', 'wing', 'setting', 'switch', 'turn'
+        'suspension', 'ride', 'height', 'wing', 'wings', 'setting', 'settings', 'switch', 'turn',
+        'flat', 'checkered', 'check', 'rain', 'wet', 'dry', 'slicks', 'inters', 'intermediate',
+        'softs', 'mediums', 'hards', 'compound', 'degradation', 'graining',
+        'lock', 'lockup', 'spin', 'slide', 'grip', 'traction', 'vibration',
+        'cool', 'cooling', 'overheat', 'pressure', 'pressures', 'window',
+        'lift', 'coast', 'saving', 'manage', 'target', 'margin',
+        'fastest', 'quickest', 'slower', 'quicker', 'losing', 'gaining',
+        'behind', 'ahead', 'catching', 'dropping', 'closing',
+        'purple', 'green', 'personal', 'best', 'time',
+        'vset', 'bias', 'offset', 'bbal', 'brake balance',
+        # Additional technical terms from analysis
+        'struggling', 'struggle', 'bouncing', 'bounce', 'pulling',
+        'wind', 'gusts', 'track', 'conditions', 'formation', 'grid',
+        'car', 'exit', 'entry', 'straight', 'line', 'corner',
+        'clutch', 'drop', 'gear', 'gears', 'second', 'third', 'fourth',
+        'rev', 'revs', 'drink', 'visor', 'radio', 'data',
+        'video', 'telemetry', 'issues', 'issue', 'problem',
+        'contact', 'incident', 'penalty', 'stewards',
+        'backing', 'formation', 'procedure', 'start',
+        'push', 'pushing', 'lifting', 'saving', 'managing',
+        'left', 'right', 'side', 'sides', 'bottom',
+        'hot', 'cold', 'warm', 'warmup', 'warm up',
+        # Edge cases from validation
+        'sticks', 'focus', 'clump', 'clumping', 'click', 'smooths',
+        'braking', 'brake point', 'lockup', 'locking', 'break'
     ]
     
     # If text contains technical keywords, keep it even if conversational
@@ -53,31 +83,27 @@ def is_purely_conversational(text):
         if keyword in text_lower:
             return False
     
-    # Purely conversational patterns (no technical content)
-    conversational_patterns = [
-        r'^(ok|okay|copy|copied|roger|affirm|affirmative|yes|yep|yeah|no|nope)\.?\s*$',
-        r'^(thanks?|thank you|cheers|appreciate it)\.?\s*$',
-        r'^(good job|well done|nice|great|excellent|perfect|brilliant)\.?\s*$',
-        r'^(sorry|my bad|apologies)\.?\s*$',
-        r'^(let\'s go|come on|push|keep going|stay focused)\.?\s*$',
-        r'^(copy that|understood|got it|all good|all clear)\.?\s*$',
-        r'^(see you|talk later|catch you)\.?\s*$',
+    # Conversational words/phrases to check for (anywhere in message)
+    conversational_words = [
+        'okay', 'ok', 'copy', 'copied', 'roger', 'affirm', 'affirmative',
+        'yes', 'yep', 'yeah', 'no', 'nope',
+        'thanks', 'thank you', 'cheers', 'appreciate it',
+        'good job', 'well done', 'nice', 'great', 'excellent', 'perfect', 'brilliant',
+        'sorry', 'my bad', 'apologies',
+        "let's go", 'lets go', 'come on', 'push', 'keep going', 'stay focused',
+        'copy that', 'understood', 'got it', 'all good', 'all clear',
+        'see you', 'talk later', 'catch you',
+        'nice one', 'good work', 'keep pushing', 'stay calm', 'focus',
+        'push now', 'good stuff', 'keep it up', 'great job',
+        'mate', 'guys', 'lads', 'buddy'
     ]
     
-    for pattern in conversational_patterns:
-        if re.match(pattern, text_lower):
-            return True
+    # Check if message contains conversational words
+    has_conversational = any(word in text_lower for word in conversational_words)
     
-    # Short messages with only encouragement words (no numbers/positions)
-    if len(text_lower.split()) <= 5:
-        encouragement_only = [
-            'well done', 'good job', 'nice one', 'good work', 'keep pushing',
-            'stay calm', 'focus', 'push now', 'come on', 'lets go', 
-            'good stuff', 'keep it up', 'great job'
-        ]
-        for phrase in encouragement_only:
-            if phrase in text_lower and not any(c.isdigit() for c in text):
-                return True
+    # If it has conversational content but no technical content, remove it
+    if has_conversational:
+        return True
     
     return False
 
