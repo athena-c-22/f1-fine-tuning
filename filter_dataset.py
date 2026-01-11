@@ -1,6 +1,7 @@
 import json
 import re
 import os
+import langid
 
 def is_gibberish(text):
     """
@@ -27,6 +28,45 @@ def is_gibberish(text):
     if special_chars > len(text) * 0.3:
         return True
     
+    return False
+
+def is_english(text):
+    """
+    Detect if the text is in English using langid.
+    Returns True if detected as English or has common English words.
+    """
+    if not text or len(text.strip()) < 10:
+        return True  # Be conservative - keep short messages
+    
+    # Check for common English words
+    text_lower = text.lower()
+    common_english_words = [
+        'the', 'and', 'for', 'you', 'that', 'this', 'with', 'from', 'have', 'are', 'was', 'were',
+        'let', 'get', 'go', 'okay', 'copy', 'yes', 'yeah', 'we', 'suggest', 'it', 'its', "it's",
+        'can', 'will', 'would', 'should', 'could', 'do', 'does', 'did', 'not', 'is', 'am', 'be',
+        'take', 'look', 'good', 'nice', 'job', 'fine', 'super', 'well', 'push', 'full', 'work',
+        'more', 'energy', 'strat', 'mate', 'guys', 'thank', 'thanks', 'all', 'my', 'i', "i'm",
+        "let's", "we'll", "i'll", "you'll", "that's", "what's", "here's", "there's"
+    ]
+    has_common_words = sum(1 for word in common_english_words if f' {word} ' in f' {text_lower} ' or text_lower.startswith(word + ' ') or text_lower.endswith(' ' + word))
+    
+    # If has common English words, definitely English
+    if has_common_words >= 1:
+        return True
+    
+    # Use langid for detection
+    lang, confidence = langid.classify(text)
+    
+    # If detected as English, keep it
+    if lang == 'en':
+        return True
+    
+    # If not detected as English but confidence is low (uncertain), be conservative and keep it
+    # Low confidence means the detector isn't sure, so we don't want to remove potentially English text
+    if confidence > -50:  # langid uses negative log probabilities, higher (less negative) = less confident
+        return True
+    
+    # High confidence non-English detection - remove it
     return False
 
 def is_purely_conversational(text):
@@ -109,7 +149,7 @@ def is_purely_conversational(text):
 
 def filter_dataset(input_file, output_file, removed_file):
     """
-    Filter a JSONL dataset file to remove gibberish and purely conversational messages.
+    Filter a JSONL dataset file to remove gibberish, non-English, and purely conversational messages.
     Also saves removed entries to a separate file for review.
     """
     if not os.path.exists(input_file):
@@ -119,6 +159,7 @@ def filter_dataset(input_file, output_file, removed_file):
     kept_count = 0
     gibberish_count = 0
     conversational_count = 0
+    non_english_count = 0
     total_count = 0
     
     with open(input_file, 'r', encoding='utf-8') as infile, \
@@ -138,6 +179,10 @@ def filter_dataset(input_file, output_file, removed_file):
                     gibberish_count += 1
                     removed = True
                     removal_reason = "gibberish"
+                elif not is_english(completion):
+                    non_english_count += 1
+                    removed = True
+                    removal_reason = "non-english"
                 elif is_purely_conversational(completion):
                     conversational_count += 1
                     removed = True
@@ -160,18 +205,19 @@ def filter_dataset(input_file, output_file, removed_file):
     print(f"  Total entries: {total_count}")
     print(f"  Kept: {kept_count}")
     print(f"  Removed gibberish: {gibberish_count}")
+    print(f"  Removed non-English: {non_english_count}")
     print(f"  Removed conversational: {conversational_count}")
     print(f"  Output saved to: {output_file}")
     print(f"  Removed entries saved to: {removed_file}")
     
-    return kept_count, gibberish_count, conversational_count
+    return kept_count, gibberish_count, non_english_count, conversational_count
 
 def main():
     """
     Process both 2023 and 2024 dataset files.
     """
-    print("F1 Dataset Filter - Removing Gibberish and Purely Conversational Messages")
-    print("=" * 70)
+    print("F1 Dataset Filter - Removing Gibberish, Non-English, and Purely Conversational Messages")
+    print("=" * 80)
     
     # Filter 2024 dataset
     if os.path.exists('f1_dataset_2024.jsonl'):
@@ -193,7 +239,7 @@ def main():
     
     # Combine filtered datasets if both exist
     if os.path.exists('f1_dataset_2024_filtered.jsonl') and os.path.exists('f1_dataset_2023_filtered.jsonl'):
-        print("\n" + "=" * 70)
+        print("\n" + "=" * 80)
         print("Combining filtered datasets...")
         
         combined_count = 0
@@ -213,7 +259,7 @@ def main():
         print(f"Combined filtered dataset created: f1_dataset_combined_filtered.jsonl")
         print(f"Total entries in combined dataset: {combined_count}")
     
-    print("\n" + "=" * 70)
+    print("\n" + "=" * 80)
     print("Filtering complete!")
 
 if __name__ == "__main__":
