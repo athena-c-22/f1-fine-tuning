@@ -36,6 +36,7 @@ radio_*.mp3
 
 # Dataset files (can be large)
 *.jsonl
+!f1_telemetry_analysis.jsonl  # Exception: track this specific dataset file
 *.csv
 *.parquet
 
