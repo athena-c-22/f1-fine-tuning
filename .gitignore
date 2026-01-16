@@ -32,7 +32,7 @@ radio_*.mp3
 *.flac
 
 # Dataset files (can be large)
-*.jsonl
+#*.jsonl
 *.csv
 *.parquet
 
