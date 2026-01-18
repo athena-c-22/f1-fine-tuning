@@ -28,12 +28,12 @@ CONFIG = {
     
     # LLM settings (using Gemini Pro)
     "llm": {
-        "provider": "gemini",           # Google Gemini
+        "provider": "gemini",           # Options: "gemini", "openai"
         "api_key": os.getenv("GEMINI_API_KEY", ""),  # Load from .env file
-        "model": "gemini-3-flash-preview",          # or "gemini-1.5-pro" for latest
-        "max_output_tokens": 1800,
+        "model": "gemini-2.0-flash-exp",          # or "gemini-1.5-pro" for Gemini, "gpt-4o-mini" for OpenAI
+        "max_output_tokens": 2500,
         "temperature": 0.7,
-        "request_delay": 6,             # Seconds to wait between requests (6s = 10 RPM for flash models free tier)
+        "request_delay": 0.1,             # Seconds to wait between requests (6s = 10 RPM for flash models free tier)
         "max_retries": 5,               # Maximum retry attempts for rate limits
         "retry_base_delay": 2,          # Base delay for exponential backoff (seconds)
     },
@@ -328,11 +328,7 @@ def generate_analysis(telemetry_data: Dict, driver_name: str) -> str:
             try:
                 response = client.models.generate_content(
                     model=CONFIG["llm"]["model"],
-                    contents=types.Part.from_text(text=prompt),
-                    config=types.GenerateContentConfig(
-                        temperature=CONFIG["llm"]["temperature"],
-                        max_output_tokens=CONFIG["llm"]["max_output_tokens"],
-                    )
+                    contents=prompt
                 )
                 return response.text.strip()
                 
