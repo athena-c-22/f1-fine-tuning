@@ -1,9 +1,13 @@
 """
 F1 Post-Race Analysis Dataset Builder
 
-Enhanced version that adds:
-- FastF1 race events (safety cars, flags, etc.)
-- IBM Granite post-race analysis summaries
+Generates fine-tuning data using Gemini as a "teacher model":
+- Gemini sees: Telemetry + Race Events (for rich analysis generation)
+- Training input: Telemetry ONLY (what the fine-tuned model will receive)
+- Training output: Gemini's professional engineering debrief
+
+This creates a "distilled" model that learns to generate F1 analysis
+from minimal telemetry data, trained on Gemini's richer outputs.
 """
 
 import os
@@ -15,53 +19,42 @@ import requests
 import json
 import time
 from pathlib import Path
-import whisper
+from datetime import datetime
 import fastf1
-from filter_dataset import is_english, is_gibberish, is_purely_conversational
-
-try:
-    from ibm_watsonx_ai.foundation_models import Model
-    from ibm_watsonx_ai.metanames import GenTextParamsMetaNames as GenParams
-except ImportError:
-    print("Warning: ibm-watsonx-ai not installed")
+from google import genai
+from google.genai import types
 
 # Configuration
-IBM_API_KEY = os.getenv("IBM_CLOUD_API_KEY")
-IBM_PROJECT_ID = os.getenv("IBM_PROJECT_ID")
-GRANITE_MODEL_ID = "ibm/granite-3b-code-instruct"
-WHISPER_MODEL = "base" 
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = "gemini-3-flash-preview"
 OUTPUT_FILE = "post_race_training_data.jsonl"
 
 # Rate limiting settings
 REQUEST_DELAY = 0.5  # seconds between API requests
-BATCH_SIZE = 10      # download 10 MP3s, then pause
-BATCH_DELAY = 1.0    # seconds between batches
 
-# All 2024 F1 races
-RACES_2024 = [
+# All 2023 F1 races
+RACES_2023 = [
     "Bahrain Grand Prix",
     "Saudi Arabian Grand Prix",
     "Australian Grand Prix",
-    "Japanese Grand Prix",
-    "Chinese Grand Prix",
+    "Azerbaijan Grand Prix",
     "Miami Grand Prix",
-    "Emilia Romagna Grand Prix",
     "Monaco Grand Prix",
-    "Canadian Grand Prix",
     "Spanish Grand Prix",
+    "Canadian Grand Prix",
     "Austrian Grand Prix",
     "British Grand Prix",
     "Hungarian Grand Prix",
     "Belgian Grand Prix",
     "Dutch Grand Prix",
     "Italian Grand Prix",
-    "Azerbaijan Grand Prix",
     "Singapore Grand Prix",
+    "Japanese Grand Prix",
+    "Qatar Grand Prix",
     "United States Grand Prix",
     "Mexico City Grand Prix",
     "São Paulo Grand Prix",
     "Las Vegas Grand Prix",
-    "Qatar Grand Prix",
     "Abu Dhabi Grand Prix",
 ]
 
@@ -101,83 +94,71 @@ def get_session_key(year, gp_name):
     return None
 
 
-def download_and_transcribe_radio(session_key, model):
-    """Download MP3s and transcribe for a session"""
-    print(f"  📥 Getting radio data...")
+def get_driver_telemetry(session_key, driver_number):
+    """Get telemetry data for a specific driver from OpenF1"""
+    print(f"     📡 Fetching OpenF1 telemetry for driver {driver_number}...")
     
-    url = f"https://api.openf1.org/v1/team_radio?session_key={session_key}"
-    print(f"     Rate limit: waiting {REQUEST_DELAY}s...")
-    time.sleep(REQUEST_DELAY)
-    response = requests.get(url)
-    
-    if response.status_code != 200:
-        print(f"  ❌ Failed to get radio data")
-        return []
-    
-    radio_data = response.json()
-    print(f"  ✓ Found {len(radio_data)} radio messages")
-    
-    # Download and transcribe
-    transcripts = []
-    removed_non_english = 0
-    removed_gibberish = 0
-    removed_conversational = 0
-    
-    mp3_dir = Path(f"radio_mp3s/{session_key}")
-    mp3_dir.mkdir(parents=True, exist_ok=True)
-    
-    for i, msg in enumerate(radio_data):
-        # Rate limiting: pause after each batch
-        if i > 0 and i % BATCH_SIZE == 0:
-            print(f"  ⏸  Batch pause ({i}/{len(radio_data)}): waiting {BATCH_DELAY}s...")
-            time.sleep(BATCH_DELAY)
+    try:
+        # Get lap times
+        laps_url = f"https://api.openf1.org/v1/laps?session_key={session_key}&driver_number={driver_number}"
+        time.sleep(REQUEST_DELAY)
+        laps_response = requests.get(laps_url)
         
-        recording_url = msg.get('recording_url')
-        if not recording_url:
-            continue
+        if laps_response.status_code != 200:
+            return {}
         
-        mp3_file = mp3_dir / f"{session_key}_{i}.mp3"
+        laps = laps_response.json()
         
-        try:
-            print(f"     Rate limit: waiting {REQUEST_DELAY}s...")
-            time.sleep(REQUEST_DELAY)  # Rate limit each download
-            response = requests.get(recording_url)
-            mp3_file.write_bytes(response.content)
-            
-            # Transcribe
-            result = model.transcribe(str(mp3_file))
-            transcript = result['text'].strip()
-            
-            # Filter 1: English only
-            if not is_english(transcript):
-                removed_non_english += 1
-                continue
-            
-            # Filter 2: No gibberish
-            if is_gibberish(transcript):
-                removed_gibberish += 1
-                continue
-            
-            # Filter 3: No purely conversational messages
-            if is_purely_conversational(transcript):
-                removed_conversational += 1
-                continue
-            
-            # Passed all filters
-            transcripts.append({
-                'driver_number': msg.get('driver_number'),
-                'transcript': transcript
-            })
-            
-            if (i + 1) % 5 == 0:
-                print(f"  ✓ Processed {i + 1}/{len(radio_data)} ({len(transcripts)} kept)")
+        # Get position data
+        position_url = f"https://api.openf1.org/v1/position?session_key={session_key}&driver_number={driver_number}"
+        time.sleep(REQUEST_DELAY)
+        position_response = requests.get(position_url)
         
-        except Exception as e:
-            print(f"  ⚠️  Error on message {i}: {e}")
+        positions = []
+        if position_response.status_code == 200:
+            positions = position_response.json()
+        
+        # Get pit stops
+        pit_url = f"https://api.openf1.org/v1/pit?session_key={session_key}&driver_number={driver_number}"
+        time.sleep(REQUEST_DELAY)
+        pit_response = requests.get(pit_url)
+        
+        pits = []
+        if pit_response.status_code == 200:
+            pits = pit_response.json()
+        
+        # Get stints (tire info)
+        stint_url = f"https://api.openf1.org/v1/stints?session_key={session_key}&driver_number={driver_number}"
+        time.sleep(REQUEST_DELAY)
+        stint_response = requests.get(stint_url)
+        
+        stints = []
+        if stint_response.status_code == 200:
+            stints = stint_response.json()
+        
+        # Get car data (throttle, brake, RPM, speed, gear, DRS)
+        car_data_url = f"https://api.openf1.org/v1/car_data?session_key={session_key}&driver_number={driver_number}"
+        time.sleep(REQUEST_DELAY)
+        car_data_response = requests.get(car_data_url)
+        
+        car_data = []
+        if car_data_response.status_code == 200:
+            car_data = car_data_response.json()
+        
+        telemetry = {
+            "laps": laps,  # All laps for training input
+            "positions": positions,  # All positions for training input
+            "pit_stops": pits,
+            "stints": stints,
+            "car_data": car_data  # Raw telemetry: throttle, brake, RPM, speed, gear, DRS
+        }
+        
+        print(f"     ✓ Got {len(laps)} laps, {len(pits)} pit stops, {len(stints)} stints, {len(car_data)} car data points")
+        return telemetry
     
-    print(f"  ✅ Got {len(transcripts)}/{len(radio_data)} transcripts after filtering")
-    print(f"     Filtered out: {removed_non_english} non-English, {removed_gibberish} gibberish, {removed_conversational} conversational")
-    return transcripts
+    except Exception as e:
+        print(f"     ⚠️  Telemetry error: {e}")
+        return {}
 
 
 def get_fastf1_events(year, gp_name):
@@ -218,55 +199,146 @@ def get_fastf1_events(year, gp_name):
         return []
 
 
-def generate_with_granite(transcripts, events, gp_name, year):
-    """Generate post-race analysis with Granite"""
-    print(f"  🤖 Generating analysis with Granite...")
+def generate_with_gemini(events, telemetry, gp_name, year, driver_num, driver_name):
+    """Generate post-race analysis with Gemini using OpenF1 telemetry + FastF1 race events"""
+    print(f"  🤖 Generating Gemini analysis (full telemetry + race events)...")
     
-    # Format inputs
-    radio_text = "\n".join([f"- {t['transcript']}" for t in transcripts[:30]])
-    events_text = "\n".join([f"Lap {e['lap']}: {e['message']}" for e in events[:20]])
-    
-    prompt = f"""Analyze {year} {gp_name}:
+    # Format ALL lap times for Gemini
+    lap_summary = ""
+    if telemetry.get("laps"):
+        fastest_lap = min(telemetry["laps"], key=lambda x: x.get("lap_duration", float('inf')) if x.get("lap_duration") else float('inf'))
+        slowest_lap = max(telemetry["laps"], key=lambda x: x.get("lap_duration", 0) if x.get("lap_duration") else 0)
+        avg_lap = sum(lap.get('lap_duration', 0) for lap in telemetry["laps"] if lap.get('lap_duration')) / max(len([l for l in telemetry["laps"] if l.get('lap_duration')]), 1)
+        
+        # All lap times
+        lap_times = [f"Lap {lap.get('lap_number')}: {lap.get('lap_duration'):.3f}s" 
+                    for lap in telemetry["laps"] if lap.get('lap_duration')]
+        
+        lap_summary = f"""
+Lap Statistics:
+- Total Laps: {len([l for l in telemetry["laps"] if l.get('lap_duration')])}
+- Fastest Lap: Lap {fastest_lap.get('lap_number')} - {fastest_lap.get('lap_duration'):.3f}s
+- Slowest Lap: Lap {slowest_lap.get('lap_number')} - {slowest_lap.get('lap_duration'):.3f}s
+- Average Lap: {avg_lap:.3f}s
 
-**Race Events:**
+All Lap Times:
+""" + "\n".join(lap_times)
+    
+    # Format ALL pit stops
+    pit_summary = ""
+    if telemetry.get("pit_stops"):
+        pit_summary = "\n\nPit Stops:\n" + "\n".join([f"Lap {pit.get('lap_number')}: {pit.get('pit_duration'):.2f}s" 
+                                                       for pit in telemetry["pit_stops"] if pit.get('pit_duration')])
+    
+    # Format ALL tire stints
+    stint_summary = ""
+    if telemetry.get("stints"):
+        stint_summary = "\n\nTire Stints:\n" + "\n".join([f"Stint {stint.get('stint_number')}: {stint.get('compound')} compound (Laps {stint.get('lap_start')}-{stint.get('lap_end')}, {stint.get('lap_end') - stint.get('lap_start') + 1} laps)" 
+                                                          for stint in telemetry["stints"] if stint.get('compound')])
+    
+    # Format position changes with more detail
+    position_summary = ""
+    if telemetry.get("positions") and len(telemetry["positions"]) > 0:
+        positions = telemetry["positions"]
+        start_pos = positions[0].get("position", "?")
+        end_pos = positions[-1].get("position", "?")
+        
+        # Track position changes
+        position_changes = []
+        prev_pos = start_pos
+        for pos_data in positions[::5]:  # Sample every 5th position to avoid overwhelming
+            curr_pos = pos_data.get("position")
+            if curr_pos != prev_pos:
+                position_changes.append(f"Changed to P{curr_pos}")
+                prev_pos = curr_pos
+        
+        position_summary = f"\n\nPosition Data:\n- Start Position: P{start_pos}\n- Finish Position: P{end_pos}"
+        if position_changes:
+            position_summary += f"\n- Key Position Changes: {', '.join(position_changes[:10])}"
+    
+    # Format car data summary (sampled telemetry points)
+    car_data_summary = ""
+    if telemetry.get("car_data"):
+        car_data = telemetry["car_data"]
+        # Sample key moments (start, middle, end, plus some race points)
+        sample_indices = [0, len(car_data)//4, len(car_data)//2, 3*len(car_data)//4, -1]
+        samples = []
+        for idx in sample_indices:
+            if 0 <= idx < len(car_data):
+                cd = car_data[idx]
+                samples.append(f"  {cd.get('date', 'N/A')}: Speed={cd.get('speed')}km/h, RPM={cd.get('rpm')}, Gear={cd.get('n_gear')}, Throttle={cd.get('throttle')}%, Brake={cd.get('brake')}%, DRS={cd.get('drs')}")
+        
+        if samples:
+            car_data_summary = f"\n\nCar Data Samples ({len(car_data)} total points):\n" + "\n".join(samples)
+    
+    # Format race events
+    events_text = "\n".join([f"Lap {e['lap']}: {e['message']}" for e in events[:30]])  # More events
+    
+    # Gemini prompt with FULL telemetry data
+    prompt = f"""You are an F1 race engineer analyzing {driver_name}'s performance at the {year} {gp_name}.
+
+TELEMETRY DATA:{lap_summary}{pit_summary}{stint_summary}{position_summary}{car_data_summary}
+
+RACE EVENTS (Safety Cars, Flags, Incidents):
 {events_text}
 
-**Team Radio:**
-{radio_text}
+Write a professional post-race engineering debrief in a direct technical report format. Start with a subject line identifying the driver and race (e.g., "{driver_name} - {year} {gp_name}"), then proceed directly to the analysis sections:
 
-Provide analysis in JSON:
-{{
-  "race_summary": "2-3 sentences",
-  "key_decisions": ["decision 1", "decision 2"],
-  "critical_moments": ["moment 1", "moment 2"],
-  "recommendations": ["recommendation 1", "recommendation 2"]
-}}"""
+1. **Overall Performance and Result**: Summarize the race outcome, finishing position, and key achievements
+2. **Pace Consistency and Key Lap Times**: Analyze lap-to-lap consistency across the entire race, identify fastest/slowest laps, examine pace windows within each stint
+3. **Tire Management and Degradation**: Evaluate tire wear patterns by analyzing lap time degradation curves within each stint, assess compound performance and stint lengths
+4. **Strategy Effectiveness**: Analyze pit stop timing and duration, tire compound choices, strategy execution relative to race events
+5. **Strengths**: Highlight areas where the driver excelled (pace, consistency, tire management, overtaking)
+6. **Weaknesses**: Identify areas for improvement based on lap time variations, slow laps, or inconsistent sectors
+7. **Comparison to Teammate/Field**: Compare performance relative to others if position changes or lap time patterns suggest insights
+8. **Analysis of Car Data**: Analyze telemetry patterns from car_data including:
+   - Throttle application patterns and lift points
+   - Braking intensity and points (brake %)
+   - RPM utilization and shift points
+   - DRS usage effectiveness
+   - Speed traces through different race phases
+   - Gear selection patterns
+9. **Recommendations**: Provide actionable technical insights for future races based on the data
+
+Format: Subject line, then section headings with markdown (###). Write in a concise, technical engineering style.
+
+CRITICAL ANALYSIS GUIDELINES:
+- Use ALL the lap time data to identify patterns, degradation curves, and performance windows
+- Reference specific lap numbers and times extensively (e.g., "Lap 23: 1:32.456 shows a 0.8s drop from the previous lap")
+- Calculate and comment on lap time deltas between consecutive laps to identify tire deg, traffic, or issues
+- When you see lap time spikes (>5s slower than average), consider pit stops, safety cars, or incidents from race events
+- For tire degradation: Compare first 3 laps of a stint vs last 3 laps - quantify the delta
+- When referencing race events: Use inferential language like "the lap time data suggests", "likely corresponding to", "possibly indicating", rather than stating events as absolute facts
+- Language: Use driver names or "the driver". Avoid gendered pronouns (he/she/his/her) and plural pronouns (they/them). Rephrase with "the" (e.g., "the driver's pace", "the fastest lap")
+- Be quantitative: Always cite specific lap numbers, times, and deltas
+- Technical depth: Treat this as an internal engineering debrief, not a public commentary"""
     
-    if not IBM_API_KEY or not IBM_PROJECT_ID:
-        print(f"  ⚠️  IBM credentials not set, using mock data")
-        return '{"race_summary": "MOCK - Set IBM_CLOUD_API_KEY and IBM_PROJECT_ID", "key_decisions": [], "critical_moments": [], "recommendations": []}'
+    if not GEMINI_API_KEY:
+        print(f"  ⚠️  Gemini API key not set, using mock data")
+        return "MOCK - Set GEMINI_API_KEY environment variable"
     
     try:
-        model = Model(
-            model_id=GRANITE_MODEL_ID,
-            params={GenParams.MAX_NEW_TOKENS: 1000, GenParams.TEMPERATURE: 0.7},
-            credentials={"apikey": IBM_API_KEY, "url": "https://eu-gb.ml.cloud.ibm.com"},  # London region
-            project_id=IBM_PROJECT_ID
-        )
+        client = genai.Client(api_key=GEMINI_API_KEY)
         
-        completion = model.generate_text(prompt=prompt)
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt
+        )
+        completion = response.text.strip()
         print(f"  ✓ Analysis generated ({len(completion)} chars)")
         return completion
     
     except Exception as e:
-        print(f"  ❌ Granite error: {e}")
-        return f'{{"error": "{str(e)}"}}'
+        error_msg = str(e)
+        print(f"  ❌ Gemini error: {error_msg}")
+        # Don't fall back to anything - raise the error
+        raise Exception(f"Gemini API failed: {error_msg}")
 
 
-def process_race(year, gp_name, whisper_model):
+def process_race(year, gp_name):
     """Process one race - generates per-driver training examples"""
     print(f"\n{'='*60}")
-    print(f"{year} {gp_name}")
+    print(f"🏁 {year} {gp_name}")
     print(f"{'='*60}")
     
     # Get session key
@@ -275,66 +347,119 @@ def process_race(year, gp_name, whisper_model):
         print("⚠️  Skipping - no session key found\n")
         return []
     
-    # Download and transcribe
-    transcripts = download_and_transcribe_radio(session_key, whisper_model)
-    if not transcripts:
-        print("⚠️  Skipping - no transcripts\n")
-        return []
-    
     # Get FastF1 events
     events = get_fastf1_events(year, gp_name)
     
-    # Group transcripts by driver
-    driver_transcripts = {}
-    for t in transcripts:
-        driver_num = t.get('driver_number')
-        if driver_num:
-            if driver_num not in driver_transcripts:
-                driver_transcripts[driver_num] = []
-            driver_transcripts[driver_num].append(t)
+    # Get list of drivers from OpenF1
+    url = f"https://api.openf1.org/v1/drivers?session_key={session_key}"
+    print(f"  🔍 Fetching driver list from OpenF1...")
+    time.sleep(REQUEST_DELAY)
+    response = requests.get(url)
     
-    print(f"  📊 Found {len(driver_transcripts)} drivers with transcripts")
+    if response.status_code != 200:
+        print("  ⚠️  Skipping - couldn't get driver list\n")
+        return []
+    
+    drivers = response.json()
+    # Create mapping of driver_number -> full_name
+    driver_map = {d.get('driver_number'): d.get('full_name', f'Driver {d.get("driver_number")}') 
+                  for d in drivers if d.get('driver_number')}
+    driver_numbers = list(driver_map.keys())
+    print(f"  📊 Found {len(driver_numbers)} drivers")
     
     # Generate one training example per driver
     examples = []
-    for driver_num, driver_msgs in driver_transcripts.items():
-        # Skip drivers with too few messages
-        if len(driver_msgs) < 3:
-            print(f"  ⚠️  Driver {driver_num}: Only {len(driver_msgs)} messages, skipping")
+    for driver_num in driver_numbers:
+        driver_name = driver_map.get(driver_num, f'Driver {driver_num}')
+        print(f"\n  ── Driver {driver_num} ({driver_name}) ──")
+        
+        # Get telemetry for this driver
+        telemetry = get_driver_telemetry(session_key, driver_num)
+        
+        if not telemetry.get("laps"):
+            print(f"     ⚠️  No lap data, skipping")
             continue
         
-        print(f"  🤖 Processing Driver {driver_num} ({len(driver_msgs)} messages)...")
+        # Calculate fastest lap
+        fastest_lap = min(telemetry["laps"], key=lambda x: x.get("lap_duration", float('inf')) if x.get("lap_duration") else float('inf'))
         
-        # Generate driver-specific summary
-        radio_sample = "\n".join([f"- {t['transcript']}" for t in driver_msgs[:15]])
-        events_sample = "\n".join([f"Lap {e['lap']}: {e['message']}" for e in events[:15]])
+        # Skip if fastest lap has no duration (invalid data)
+        if not fastest_lap.get('lap_duration'):
+            print(f"     ⚠️  No valid lap times, skipping")
+            continue
         
-        prompt = f"""Analyze Driver {driver_num} performance in {year} {gp_name}:
-
-**Race Events:**
-{events_sample}
-
-**Driver {driver_num} Radio:**
-{radio_sample}
-
-Provide strategic analysis:"""
+        positions = telemetry.get("positions", [])
         
-        completion = generate_with_granite(driver_msgs, events, gp_name, year)
+        # Format telemetry for Gemini prompt (used for generation, not training input)
+        lap_times = [f"Lap {lap.get('lap_number')}: {lap.get('lap_duration'):.3f}s" for lap in telemetry["laps"][:10] if lap.get('lap_duration')]
+        lap_summary = f"""\nFastest Lap: Lap {fastest_lap.get('lap_number')} - {fastest_lap.get('lap_duration'):.3f}s
+First 10 lap times:
+""" + "\n".join(lap_times)
         
-        examples.append({
-            "prompt": prompt,
-            "completion": completion,
+        pit_summary = ""
+        if telemetry.get("pit_stops"):
+            pit_summary = "\n\nPit Stops:\n" + "\n".join([f"Lap {pit.get('lap_number')}: {pit.get('pit_duration'):.2f}s" for pit in telemetry["pit_stops"][:5] if pit.get('pit_duration')])
+        
+        stint_summary = ""
+        if telemetry.get("stints"):
+            stint_summary = "\n\nTire Stints:\n" + "\n".join([f"Stint {stint.get('stint_number')}: {stint.get('compound')} ({stint.get('lap_start')}-{stint.get('lap_end')})" for stint in telemetry["stints"] if stint.get('compound')])
+        
+        position_summary = ""
+        if positions and len(positions) > 0:
+            start_pos = positions[0].get("position", "?")
+            end_pos = positions[-1].get("position", "?")
+            position_summary = f"\n\nPosition: Started P{start_pos}, Finished P{end_pos}"
+        
+        # Training input: FULL telemetry data (what fine-tuned model will receive at inference)
+        # Downsample car_data to keep size reasonable (~100 points)
+        car_data_raw = telemetry.get("car_data", [])
+        car_data_sampled = []
+        if car_data_raw:
+            step = max(1, len(car_data_raw) // 100)
+            car_data_sampled = car_data_raw[::step][:100]
+        
+        training_input_data = {
+            "laps": [{"lap": lap.get('lap_number'), "time": lap.get('lap_duration')} 
+                     for lap in telemetry["laps"] if lap.get('lap_duration')],
+            "positions": [{"position": pos.get('position'), "date": pos.get('date')} 
+                         for pos in positions[:100]] if positions else [],  # Sample positions
+            "pit_stops": [{"lap": pit.get('lap_number'), "duration": pit.get('pit_duration')} 
+                         for pit in telemetry.get("pit_stops", []) if pit.get('pit_duration')],
+            "stints": [{"stint": stint.get('stint_number'), "compound": stint.get('compound'), 
+                       "lap_start": stint.get('lap_start'), "lap_end": stint.get('lap_end')} 
+                      for stint in telemetry.get("stints", []) if stint.get('compound')],
+            "car_data": [{"date": cd.get('date'), "rpm": cd.get('rpm'), "speed": cd.get('speed'),
+                         "gear": cd.get('n_gear'), "throttle": cd.get('throttle'), 
+                         "brake": cd.get('brake'), "drs": cd.get('drs')}
+                        for cd in car_data_sampled]
+        }
+        
+        training_input = json.dumps(training_input_data)
+        
+        # Gemini generation: Uses SUMMARY + race events (cheaper API calls)
+        completion = generate_with_gemini(events, telemetry, gp_name, year, driver_num, driver_name)
+        
+        example = {
+            "input": training_input,
+            "output": completion,
             "metadata": {
                 "year": year,
                 "gp": gp_name,
                 "driver_number": driver_num,
+                "driver_name": driver_name,
                 "session_key": session_key,
-                "num_transcripts": len(driver_msgs),
-                "num_events": len(events)
+                "num_events": len(events),
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
-        })
+        }
         
-        print(f"  ✓ Driver {driver_num} complete")
+        examples.append(example)
+        
+        # Write immediately after each driver
+        with open(OUTPUT_FILE, 'a') as f:
+            f.write(json.dumps(example) + '\n')
+        
+        print(f"     ✅ Saved to {OUTPUT_FILE}")
     
     return examples
 
@@ -342,31 +467,23 @@ Provide strategic analysis:"""
 def main():
     print("="*60)
     print("F1 Post-Race Dataset Builder")
+    print("  Year: 2023")
+    print("  Data: OpenF1 telemetry + FastF1 race events")
+    print("  Output: Gemini-generated engineering analysis")
     print("="*60)
-    
-    # Load Whisper
-    print(f"\n📥 Loading Whisper {WHISPER_MODEL} model...")
-    model = whisper.load_model(WHISPER_MODEL)
-    print("✓ Whisper loaded")
     
     # Process races
     training_examples = []
-    for gp in RACES_2024:
-        examples = process_race(2024, gp, model)
+    for gp in RACES_2023:
+        examples = process_race(2023, gp)
         
         if examples:
             training_examples.extend(examples)
-            
-            # Save incrementally
-            for example in examples:
-                with open(OUTPUT_FILE, 'a') as f:
-                    f.write(json.dumps(example) + '\n')
-            
-            print(f"✅ Saved {len(examples)} driver examples to {OUTPUT_FILE}\n")
+            print(f"  ✅ Race complete: {len(examples)} driver examples\n")
     
     print(f"\n{'='*60}")
     print(f"✅ Complete! Generated {len(training_examples)} examples")
-    print(f"   (~{len(training_examples) / len(RACES_2024):.1f} drivers per race average)")
+    print(f"   (~{len(training_examples) / len(RACES_2023):.1f} drivers per race average)")
     print(f"   Saved to: {OUTPUT_FILE}")
     print(f"{'='*60}")
 
