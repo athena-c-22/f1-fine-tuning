@@ -1,6 +1,63 @@
 # Fine-tuning F1 Race Engineer Model with QLoRA
 
-This script fine-tunes an IBM Granite (or compatible) instruct model using QLoRA technique for efficient training with reduced memory requirements.
+This project contains two F1 race engineer training datasets:
+
+1. **Live Race Engineer** - Real-time radio responses during the race (using team radio + telemetry)
+2. **Post-Race Analysis** - Detailed technical debriefs after the race (using telemetry + race events)
+
+## Dataset Generation
+
+### 1. Live Race Engineer Dataset 
+
+Uses OpenF1 API + Whisper to pair team radio transcripts with telemetry context:
+
+```bash
+python build_f1_race_engineer_dataset.py
+```
+
+**Output:** `f1_dataset_combined_filtered.jsonl`
+
+This dataset teaches the model to respond like a race engineer during the race - short, actionable radio communications based on live telemetry.
+
+### 2. Post-Race Analysis Dataset
+
+Uses FastF1 (free F1 telemetry library) and Gemini API to create professional engineering analyses:
+
+```bash
+python build_post_race_dataset_fastf1.py
+```
+
+**What it does:**
+- Fetches telemetry data for each driver in each race (2024 season)
+- Sends telemetry + race events to Gemini for analysis
+- Generates training examples: telemetry input → engineering debrief output
+- Handles data quality issues intelligently (missing laps, incomplete stints)
+
+**Output:** `post_race_training_data_2024.jsonl`
+
+**Prompt Design:**
+- Gemini receives full telemetry + race events (more context than the fine-tuned model will get at inference)
+- Prompt instructs natural handling of data limitations (mention missing laps, incomplete stints matter-of-factly within relevant sections)
+- Teaches the model to work with imperfect data like a real race engineer would
+
+This dataset teaches the model to provide comprehensive post-race technical debriefs with detailed quantitative analysis.
+
+### Dataset Formats
+
+**Live Race Dataset:**
+```json
+{"prompt": "Telemetry context... Radio:", "completion": "Box this lap for hards"}
+```
+
+**Post-Race Dataset:**
+**Post-Race Dataset:**
+- **input**: JSON telemetry data (laps, positions, pit stops, stints, car data)
+- **output**: Professional engineering debrief (9-section structured analysis)
+- **metadata**: race details, driver, timestamp
+
+## Model Fine-tuning
+
+Fine-tune an LLM using QLoRA for efficient training with reduced memory requirements.
 
 ## Installation
 
@@ -20,11 +77,23 @@ python fine_tune_granite_qlora.py
 
 ### With Custom Parameters
 
+Post-race analysis dataset:
 ```bash
 python fine_tune_granite_qlora.py \
     --model "ibm-granite/granite-3b-instruct" \
-    --dataset "f1_dataset_2024_filtered.jsonl" \
-    --output "./granite_f1_finetuned" \
+    --dataset "post_race_training_data_2024.jsonl" \
+    --output "./granite_f1_postrace_finetuned" \
+    --epochs 3 \
+    --batch-size 4 \
+    --learning-rate 2e-4
+```
+
+Live race radio dataset:
+```bash
+python fine_tune_granite_qlora.py \
+    --model "ibm-granite/granite-3b-instruct" \
+    --dataset "f1_dataset_combined_filtered.jsonl" \
+    --output "./granite_f1_live_finetuned" \
     --epochs 3 \
     --batch-size 4 \
     --learning-rate 2e-4
@@ -33,7 +102,7 @@ python fine_tune_granite_qlora.py \
 ## Arguments
 
 - `--model`: Model name or path (default: `mistralai/Mistral-7B-Instruct-v0.2`)
-- `--dataset`: Path to JSONL dataset (default: `f1_dataset_2024_filtered.jsonl`)
+- `--dataset`: Path to JSONL dataset (default: `post_race_training_data_2024.jsonl`)
 - `--output`: Output directory for fine-tuned model (default: `./granite_f1_finetuned`)
 - `--epochs`: Number of training epochs (default: 3)
 - `--batch-size`: Training batch size (default: 4)
@@ -48,11 +117,17 @@ If you have access to IBM Granite models, use:
 
 ## Dataset Format
 
-The dataset should be in JSONL format with `prompt` and `completion` fields:
+The dataset is in JSONL format with `input`, `output`, and `metadata` fields:
 
 ```json
-{"prompt": "Telemetry: speed 190.4, rpm 9543.7. Advice:", "completion": "Box this lap for hards."}
+{
+  "input": "{\"laps\": [{\"lap\": 1, \"time\": 97.284}, ...], \"positions\": [...], \"pit_stops\": [...], \"stints\": [...], \"car_data\": [...]}",
+  "output": "**SUBJECT: Max Verstappen - 2024 Bahrain Grand Prix**\n\n### 1. Overall Performance and Result\n...",
+  "metadata": {"year": 2024, "gp": "Bahrain", "driver_abbr": "VER", "driver_name": "Max Verstappen"}
+}
 ```
+
+**Note:** You may need to adapt the training script to use `input`/`output` instead of `prompt`/`completion`.
 
 ## QLoRA Configuration
 
@@ -91,12 +166,13 @@ tokenizer = AutoTokenizer.from_pretrained("ibm-granite/granite-3b-instruct")
 # Load LoRA adapters
 model = PeftModel.from_pretrained(base_model, "./granite_f1_finetuned")
 
-# Use the model
-prompt = "Telemetry: speed 250, rpm 11000. Advice:"
+# Use the model for post-race analysis
+telemetry_json = '{"laps": [{"lap": 1, "time": 95.2}, ...], "positions": [...], "pit_stops": [...]}'
+prompt = f"Analyze this F1 race telemetry:\n{telemetry_json}"
 inputs = tokenizer(f"<s>[INST] {prompt} [/INST]", return_tensors="pt")
-outputs = model.generate(**inputs, max_length=100)
+outputs = model.generate(**inputs, max_length=2048)
 response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-print(response)
+print(response)  # Should output a structured engineering debrief
 ```
 
 ## Tips

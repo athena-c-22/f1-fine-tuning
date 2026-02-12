@@ -37,6 +37,7 @@ radio_mp3s/
 *.csv
 *.parquet
 cache/
+post_race_training_telemetry.jsonl
 
 # Jupyter Notebooks
 .ipynb_checkpoints/

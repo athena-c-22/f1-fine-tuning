@@ -27,7 +27,7 @@ from google.genai import types
 # Configuration
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = "gemini-3-flash-preview"
-OUTPUT_FILE = "post_race_training_data.jsonl"
+OUTPUT_FILE = "temp.jsonl"
 
 # Rate limiting settings
 REQUEST_DELAY = 0.5  # seconds between API requests
