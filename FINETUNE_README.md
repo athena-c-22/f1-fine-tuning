@@ -28,17 +28,35 @@ python build_post_race_dataset_fastf1.py
 ```
 
 **What it does:**
-- Fetches telemetry data for each driver in each race (2024 season)
+- Fetches telemetry data for each driver in each race (2023/2024/2025 seasons)
 - Sends telemetry + race events to Gemini for analysis
 - Generates training examples: telemetry input → engineering debrief output
 - Handles data quality issues intelligently (missing laps, incomplete stints)
+- Network error resilience (skips failed drivers, resumes from last successful)
 
-**Output:** `post_race_training_data_2024.jsonl`
+**Output:** 
+- `post_race_training_data_2023.jsonl` (~440 examples)
+- `post_race_training_data_2024.jsonl` (~440 examples)
+- `post_race_training_data_2025.jsonl` (~440 examples)
+- **Total:** ~1,320 training examples
+
+**Hallucination Prevention:**
+Critical prompt engineering to prevent Gemini from citing race events the fine-tuned model won't have access to:
+- Race events marked "FOR CONTEXT ONLY" in Gemini prompt
+- Requires inferential language ("suggests", "likely", "may indicate") instead of definitive statements
+- Prohibits quoting race control messages, penalties, or specific incidents by name
+- All conclusions must be derivable from telemetry alone
+
+**Example:**
+- ALLOWED: "Lap 28 spike (114s) suggests Safety Car deployment"
+- FORBIDDEN: "The penalty on Lap 14 for track limits..."
 
 **Prompt Design:**
 - Gemini receives full telemetry + race events (more context than the fine-tuned model will get at inference)
 - Prompt instructs natural handling of data limitations (mention missing laps, incomplete stints matter-of-factly within relevant sections)
 - Teaches the model to work with imperfect data like a real race engineer would
+- Generates 9-section structured analysis: Performance, Pace, Tire Management, Strategy, Strengths, Weaknesses, Comparison, Car Data, Recommendations
+
 
 This dataset teaches the model to provide comprehensive post-race technical debriefs with detailed quantitative analysis.
 
@@ -102,7 +120,7 @@ python fine_tune_granite_qlora.py \
 ## Arguments
 
 - `--model`: Model name or path (default: `mistralai/Mistral-7B-Instruct-v0.2`)
-- `--dataset`: Path to JSONL dataset (default: `post_race_training_data_2024.jsonl`)
+- `--dataset`: Path to JSONL dataset (default: `post_race_training_data_2024.jsonl` or `post_race_combined.jsonl` for all seasons)
 - `--output`: Output directory for fine-tuned model (default: `./granite_f1_finetuned`)
 - `--epochs`: Number of training epochs (default: 3)
 - `--batch-size`: Training batch size (default: 4)
@@ -122,8 +140,8 @@ The dataset is in JSONL format with `input`, `output`, and `metadata` fields:
 ```json
 {
   "input": "{\"laps\": [{\"lap\": 1, \"time\": 97.284}, ...], \"positions\": [...], \"pit_stops\": [...], \"stints\": [...], \"car_data\": [...]}",
-  "output": "**SUBJECT: Max Verstappen - 2024 Bahrain Grand Prix**\n\n### 1. Overall Performance and Result\n...",
-  "metadata": {"year": 2024, "gp": "Bahrain", "driver_abbr": "VER", "driver_name": "Max Verstappen"}
+  "output": "**Charles Leclerc - 2025 Bahrain Grand Prix**\n\n### 1. Overall Performance and Result\n...",
+  "metadata": {"year": 2025, "gp": "Bahrain", "driver_abbr": "LEC", "driver_name": "Charles Leclerc", "num_events": 91, "timestamp": "2026-02-12 21:20:03"}
 }
 ```
 

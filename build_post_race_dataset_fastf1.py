@@ -29,7 +29,7 @@ from google.genai import types
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = "gemini-3-flash-preview"
 # OUTPUT
-OUTPUT_FILE = "post_race_training_data_2024.jsonl"
+OUTPUT_FILE = "post_race_training_data_2025.jsonl"
 
 # All 2023 F1 races
 RACES_2023 = [
@@ -59,6 +59,34 @@ RACES_2023 = [
 
 # All 2024 F1 races
 RACES_2024 = [
+    "Bahrain",
+    "Saudi Arabia",
+    "Australia",
+    "Japan",
+    "China",
+    "Miami",
+    "Emilia Romagna",
+    "Monaco",
+    "Canada",
+    "Spain",
+    "Austria",
+    "Great Britain",
+    "Hungary",
+    "Belgium",
+    "Netherlands",
+    "Italy",
+    "Azerbaijan",
+    "Singapore",
+    "United States",
+    "Mexico",
+    "São Paulo",
+    "Las Vegas",
+    "Qatar",
+    "Abu Dhabi",
+]
+
+# All 2025 F1 races
+RACES_2025 = [
     "Bahrain",
     "Saudi Arabia",
     "Australia",
@@ -521,13 +549,13 @@ def process_race(year, gp_name, skip_until_gp=None, skip_until_driver=None):
 def main():
     print("="*60)
     print("F1 Post-Race Dataset Builder")
-    print("  Year: 2024")
+    print("  Year: 2025")
     print("  Data: FastF1 telemetry + race events")
     print("  Output: Gemini-generated engineering analysis")
     print("="*60)
     
     # Resume configuration
-    RESUME_FROM_GP = "Azerbaijan"  # Resume from Azerbaijan GP
+    RESUME_FROM_GP = None  # Start from beginning
     RESUME_FROM_DRIVER = None  # Use duplicate detection to skip completed drivers
     
     # Process races
@@ -535,9 +563,9 @@ def main():
     skip_until_gp = RESUME_FROM_GP
     skip_until_driver = RESUME_FROM_DRIVER
     
-    for gp in RACES_2024:
+    for gp in RACES_2025:
         # Pass skip parameters
-        examples = process_race(2024, gp, skip_until_gp=skip_until_gp, skip_until_driver=skip_until_driver)
+        examples = process_race(2025, gp, skip_until_gp=skip_until_gp, skip_until_driver=skip_until_driver)
         
         # Once we reach the resume GP, clear the skip flags
         if gp == RESUME_FROM_GP:
@@ -550,7 +578,7 @@ def main():
     
     print(f"\n{'='*60}")
     print(f"✅ Complete! Generated {len(training_examples)} examples")
-    print(f"   (~{len(training_examples) / len(RACES_2024):.1f} drivers per race average)")
+    print(f"   (~{len(training_examples) / len(RACES_2025):.1f} drivers per race average)")
     print(f"   Saved to: {OUTPUT_FILE}")
     print(f"{'='*60}")
 
