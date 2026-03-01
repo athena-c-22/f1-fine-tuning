@@ -31,7 +31,7 @@ import whisper.audio as whisper_audio
 
 
 # Configuration
-YEARS = [2023]  # Years to process
+YEARS = [2025]  # Years to process
 SESSION_TYPE = "Race"  # Options: "Race", "Practice", "Qualifying", etc. or None for all
 TELEMETRY_WINDOW_SECONDS = 30  # Seconds before radio message to include telemetry
 WHISPER_MODEL = "base"  # Options: tiny, base, small, medium, large

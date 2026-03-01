@@ -214,36 +214,51 @@ def filter_dataset(input_file, output_file, removed_file):
 
 def main():
     """
-    Process both 2023 and 2024 dataset files.
+    Process 2023-2025 dataset files.
     """
     print("F1 Dataset Filter - Removing Gibberish, Non-English, and Purely Conversational Messages")
     print("=" * 80)
-    
-    # Filter 2024 dataset
-    if os.path.exists('f1_dataset_2024.jsonl'):
-        print("\nProcessing 2024 dataset...")
-        filter_dataset('f1_dataset_2024.jsonl', 
-                      'f1_dataset_2024_filtered.jsonl',
-                      'f1_dataset_2024_removed.jsonl')
+
+    # Filter 2025 dataset
+    if os.path.exists('f1_dataset_2025.jsonl'):
+        print("\nProcessing 2025 dataset...")
+        filter_dataset('f1_dataset_2025.jsonl', 
+                      'f1_dataset_2025_filtered.jsonl',
+                      'f1_dataset_2025_removed.jsonl')
     else:
-        print("\nWarning: f1_dataset_2024.jsonl not found, skipping...")
+        print("\nWarning: f1_dataset_2025.jsonl not found, skipping...")
     
-    # Filter 2023 dataset
-    if os.path.exists('f1_dataset_2023.jsonl'):
-        print("\nProcessing 2023 dataset...")
-        filter_dataset('f1_dataset_2023.jsonl', 
-                      'f1_dataset_2023_filtered.jsonl',
-                      'f1_dataset_2023_removed.jsonl')
-    else:
-        print("\nWarning: f1_dataset_2023.jsonl not found, skipping...")
+    # # Filter 2024 dataset
+    # if os.path.exists('f1_dataset_2024.jsonl'):
+    #     print("\nProcessing 2024 dataset...")
+    #     filter_dataset('f1_dataset_2024.jsonl', 
+    #                   'f1_dataset_2024_filtered.jsonl',
+    #                   'f1_dataset_2024_removed.jsonl')
+    # else:
+    #     print("\nWarning: f1_dataset_2024.jsonl not found, skipping...")
     
-    # Combine filtered datasets if both exist
-    if os.path.exists('f1_dataset_2024_filtered.jsonl') and os.path.exists('f1_dataset_2023_filtered.jsonl'):
+    # # Filter 2023 dataset
+    # if os.path.exists('f1_dataset_2023.jsonl'):
+    #     print("\nProcessing 2023 dataset...")
+    #     filter_dataset('f1_dataset_2023.jsonl', 
+    #                   'f1_dataset_2023_filtered.jsonl',
+    #                   'f1_dataset_2023_removed.jsonl')
+    # else:
+    #     print("\nWarning: f1_dataset_2023.jsonl not found, skipping...")
+    
+    # Combine filtered datasets if all exist
+    if os.path.exists('f1_dataset_2025_filtered.jsonl') and os.path.exists('f1_dataset_2024_filtered.jsonl') and os.path.exists('f1_dataset_2023_filtered.jsonl'):
         print("\n" + "=" * 80)
         print("Combining filtered datasets...")
         
         combined_count = 0
         with open('f1_dataset_combined_filtered.jsonl', 'w', encoding='utf-8') as outfile:
+            # Add 2025 data
+            with open('f1_dataset_2025_filtered.jsonl', 'r', encoding='utf-8') as infile:
+                for line in infile:
+                    outfile.write(line)
+                    combined_count += 1
+
             # Add 2024 data
             with open('f1_dataset_2024_filtered.jsonl', 'r', encoding='utf-8') as infile:
                 for line in infile:
