@@ -33,11 +33,14 @@ radio_*.mp3
 *.mp3
 *.wav
 *.flac
+radio_mp3s/
 
 # Dataset files (can be large)
-*.jsonl
+#*.jsonl
 *.csv
 *.parquet
+cache/
+post_race_training_telemetry.jsonl
 
 # Jupyter Notebooks
 .ipynb_checkpoints/

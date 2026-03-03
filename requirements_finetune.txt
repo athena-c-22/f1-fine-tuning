@@ -9,3 +9,8 @@ protobuf>=3.20.0
 tensorboard>=2.14.0
 langid>=1.1.6
 
+# Dataset generation dependencies
+fastf1>=3.0.0
+google-generativeai>=0.3.0
+pandas>=2.0.0
+numpy>=1.24.0
